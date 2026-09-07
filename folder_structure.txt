@@ -1,0 +1,53 @@
+aura_project/
+│
+├── data/                       # No se sube a la nube (datos sensibles)
+│   ├── 01_raw_invoices/        # PDFs de Darsh y XLSX de Shiji
+│   ├── 02_appfolio_reports/    # Tus descargas manuales (Rent Roll/Bills)
+│   ├── 03_staging/             # Archivos temporales procesados
+│   └── 04_output/  
+|              # Los reportes finales de discrepancias
+│
+├── src/                        # Código fuente (Source)
+│   ├── __init__.py
+│   ├── main.py                 # Punto de entrada del programa
+│   ├── extractor.py            # Lógica de OCR y lectura de archivos
+│   ├── auditor.py              # El "Motor de Reglas" (prorrateos y cruces)
+│   └── utils.py 
+|   └── invoice_ocr.py            # Funciones de apoyo (manejo de fechas, etc.)
+│
+├── config/                     # Parámetros configurables
+│   ├── settings.json           # Tolerancias, rutas de carpetas
+│   └── mapping_rules.json      # Mapeo de Unidades y Cuentas GL
+│
+├── logs/                       # Archivos .log para auditoría técnica
+│
+├── tests/                      # Pruebas para asegurar que el cálculo no falle
+│
+├── .gitignore                  # Para evitar subir facturas a GitHub
+├── requirements.txt            # Librerías necesarias (pandas, pytesseract, etc.)
+└── README.md                   # Instrucciones de uso
+
+
+# Solo regenero requirements.txt cuando el entorno cambió y funciona.
+# Generar un archivo con resumen Esto serviría como el cuerpo del correo electrónico para tu equipo contable o para Shiji.
+
+Design principle:
+Billing calculations are source-agnostic.
+The audited system may change (Shiji, AppFolio, etc),
+but calculation logic and rules remain invariant.
+
+El Triángulo de Verdad de AURA
+1. Factura de Darsh (OCR): La evidencia física. Nos dice cuánto dinero se debe pagar y cuáles son las fechas de servicio exactas.
+
+2. AppFolio CSV (Contabilidad): Registro interno. Confirma que el equipo de contabilidad registró la factura correctamente.
+
+3. Shiji (Cobro al Inquilino): La ejecución. Lo que se le está pidiendo al inquilino que pague
+
+El sistema detectará discrepancias internas antes de mirar a Shiji. Por ejemplo:
+
+* Escenario A (Todo OK): OCR dice $100, CSV dice $100. 
+AURA procede a calcular el Bill Back sobre esos $100.
+
+* Escenario B (Error de Carga): OCR dice $\$100$, pero el CSV dice $120 (error de dedo al capturar). 
+AURA marcará un error de INTERNAL_ACCOUNTING_DISCREPANCY. Esto te permite corregir tu AppFolio
+

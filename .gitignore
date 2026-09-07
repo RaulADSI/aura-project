@@ -1,0 +1,22 @@
+# Data
+data/
+*.csv
+*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Logs
+logs/
+*.log
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
