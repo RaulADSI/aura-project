@@ -5,7 +5,10 @@ from datetime import date
 from decimal import Decimal
 import unittest
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Ensure project root is in sys.path
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from src.auditor import AuditEngine
 from src.domain.models import (
@@ -136,30 +139,27 @@ class TestAuditEngineCharacterization(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_bill_back_calculation_proportional(self):
         bill_back = self.engine.calculate_bill_back(
-            appfolio_amount=0.0,
+            amount=Decimal("300.00"),
             service_days=30,
             occupied_days=15,
-            ocr_current_charge=300.00
         )
-        self.assertEqual(round(bill_back, 2), 150.00)
+        self.assertEqual(bill_back, Decimal("150.00"))
 
     def test_bill_back_zero_occupied_days(self):
         bill_back = self.engine.calculate_bill_back(
-            appfolio_amount=0.0,
+            amount=Decimal("300.00"),
             service_days=30,
             occupied_days=0,
-            ocr_current_charge=300.00
         )
-        self.assertEqual(round(bill_back, 2), 0.00)
+        self.assertEqual(bill_back, Decimal("0.00"))
 
     def test_bill_back_capped_at_service_days(self):
         bill_back = self.engine.calculate_bill_back(
-            appfolio_amount=0.0,
+            amount=Decimal("300.00"),
             service_days=30,
             occupied_days=35,
-            ocr_current_charge=300.00
         )
-        self.assertEqual(round(bill_back, 2), 300.00)
+        self.assertEqual(bill_back, Decimal("300.00"))
 
     # ------------------------------------------------------------------
     # 5. CONTRATOS E INMUTABILIDAD

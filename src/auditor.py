@@ -1,15 +1,29 @@
-import pandas as pd
 import json
-import os
-import re
 import logging
-from typing import Optional, Any
+import os
+from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Any, List, Optional, Tuple
+
+from src.domain.models import (
+    AccountingContext,
+    AuditAnomalyFlag,
+    AuditRequest,
+    AuditResult,
+    AuditStatus,
+    InvoiceData,
+    OccupancyContext,
+    PropertyContext,
+)
 
 logger = logging.getLogger(__name__)
 
+
 class AuditEngine:
+    MONEY_QUANTUM = Decimal("0.01")
+
     def __init__(self, rules_path: str):
-        """Inicializa el motor cargando las reglas de negocio (Cuentas GL, Áreas Comunes)"""
+        """Inicializa el motor cargando las reglas de negocio desde utility_rules.json."""
         self.rules = {}
         if os.path.exists(rules_path):
             with open(rules_path, "r", encoding="utf-8") as f:
@@ -17,198 +31,225 @@ class AuditEngine:
         else:
             logger.warning(f"No se encontró el archivo de reglas: {rules_path}")
 
-    def is_common_area_exception(self, address: str) -> bool:
-        """Verifica si la dirección contiene palabras clave de áreas comunes de nuestro JSON."""
-        if not address: return False
-        
-        # Leemos la lista exacta de tu archivo utility_rules.json
-        keywords = self.rules.get("common_area_units", [
-            "LNDRM", "PUMP", "HOUSE", "COMMON", "AREA"
-        ])
-        
+    # ------------------------------------------------------------------
+    # CORE AUDIT ENGINE (PURE DOMAIN DETERMINISTIC MACHINE)
+    # ------------------------------------------------------------------
+    def audit(self, request: AuditRequest) -> AuditResult:
+        """
+        Audita un AuditRequest individual de forma pura y determinista.
+        Agnóstico de OCR, PDF, Pandas, regex de direcciones o fallbacks silenciosos.
+        """
+        anomalies: List[AuditAnomalyFlag] = []
+        inv = request.invoice
+        prop = request.property
+        occ = request.occupancy
+        acc = request.accounting
+
+        # 1. Validar Periodo de Servicio
+        if inv.service_start_date is None or inv.service_end_date is None:
+            anomalies.append(AuditAnomalyFlag.MISSING_SERVICE_DATE)
+            total_service_days = 0
+            is_valid_period = False
+        elif inv.service_start_date > inv.service_end_date:
+            anomalies.append(AuditAnomalyFlag.INVALID_SERVICE_PERIOD)
+            total_service_days = 0
+            is_valid_period = False
+        else:
+            total_service_days = (inv.service_end_date - inv.service_start_date).days + 1
+            is_valid_period = True
+
+        # 2. Check Rent Roll Context
+        if prop.property_name == "Unmatched Property" or prop.unit_name == "UNKNOWN":
+            anomalies.append(AuditAnomalyFlag.MISSING_RENT_ROLL_CONTEXT)
+
+        # Si el período de servicio es inválido/faltante -> ANOMALY_DETECTED inmediatamente
+        if not is_valid_period:
+            return AuditResult(
+                request=request,
+                status=AuditStatus.ANOMALY_DETECTED,
+                calculated_bill_back=Decimal("0.00"),
+                total_service_days=0,
+                occupied_days=0,
+                anomalies=tuple(anomalies),
+                notes="Anomalía detectada: periodo de servicio inválido o incompleto.",
+            )
+
+        # 3. Validar / Clasificar GL
+        gl_classification = self.classify_charge(acc.gl_account)
+        if gl_classification == "OWNER_EXPENSE":
+            return AuditResult(
+                request=request,
+                status=AuditStatus.OWNER_EXPENSE,
+                calculated_bill_back=Decimal("0.00"),
+                total_service_days=total_service_days,
+                occupied_days=0,
+                anomalies=tuple(anomalies),
+                notes=f"Gasto del propietario (Cuenta GL: {acc.gl_account}).",
+            )
+        elif gl_classification == "ILLEGAL":
+            return AuditResult(
+                request=request,
+                status=AuditStatus.ILLEGAL_GL,
+                calculated_bill_back=Decimal("0.00"),
+                total_service_days=total_service_days,
+                occupied_days=0,
+                anomalies=tuple(anomalies),
+                notes=f"Cuenta GL no permitida para bill-back: {acc.gl_account}.",
+            )
+
+        # 4. Common Area
+        is_common = (
+            self.is_common_area_exception(prop.unit_name)
+            or self.is_common_area_exception(prop.property_name)
+            or prop.unit_type == "COMMON_AREA"
+        )
+        if is_common:
+            return AuditResult(
+                request=request,
+                status=AuditStatus.COMMON_AREA,
+                calculated_bill_back=Decimal("0.00"),
+                total_service_days=total_service_days,
+                occupied_days=0,
+                anomalies=tuple(anomalies),
+                notes="Unidad / Área común confirmada.",
+            )
+
+        # 5. Calcular occupied_days (Pure Date Logic)
+        occupied_days = self.calculate_occupied_days(
+            inv.service_start_date,
+            inv.service_end_date,
+            occ.move_in_date,
+            occ.move_out_date,
+        )
+
+        # 6. Evaluate Vacant
+        if occupied_days == 0 or occ.tenant_name is None:
+            return AuditResult(
+                request=request,
+                status=AuditStatus.VACANT,
+                calculated_bill_back=Decimal("0.00"),
+                total_service_days=total_service_days,
+                occupied_days=0,
+                anomalies=tuple(anomalies),
+                notes="Unidad vacante o sin ocupación durante el periodo de servicio.",
+            )
+
+        # 7. Bill-back calculation (BILLABLE)
+        calculated_bill_back = self.calculate_bill_back(
+            amount=inv.amount,
+            service_days=total_service_days,
+            occupied_days=occupied_days,
+        )
+
+        notes_str = f"Inquilino: {occ.tenant_name} | Días ocupados: {occupied_days}/{total_service_days}"
+        if AuditAnomalyFlag.MISSING_RENT_ROLL_CONTEXT in anomalies:
+            notes_str += " (Advertencia: propiedad no encontrada en Rent Roll)"
+
+        return AuditResult(
+            request=request,
+            status=AuditStatus.BILLABLE,
+            calculated_bill_back=calculated_bill_back,
+            total_service_days=total_service_days,
+            occupied_days=occupied_days,
+            anomalies=tuple(anomalies),
+            notes=notes_str,
+        )
+
+    # ------------------------------------------------------------------
+    # PURE CALCULATIONS & HELPERS (NO PANDAS DEPENDENCY)
+    # ------------------------------------------------------------------
+    def is_common_area_exception(self, address: Optional[str]) -> bool:
+        if not address:
+            return False
+        keywords = self.rules.get(
+            "common_area_units",
+            ["LNDRM", "PUMP", "HOUSE", "COMMON", "AREA"],
+        )
         addr_upper = str(address).upper()
-        # Si alguna de las unidades especiales (Ej: "AHSE", "LED LTS") está en el OCR, es Área Común
         return any(str(kw).upper() in addr_upper for kw in keywords)
 
     def classify_charge(self, gl_account: Any, description: str = "") -> str:
-        """Determina si un gasto es cobrable según las listas GL de AppFolio."""
-        gl_str = str(gl_account).strip()
-        if not gl_str or gl_str.lower() in ['nan', 'none']:
+        if gl_account is None:
             return "UNKNOWN"
-            
-        # 1. ¿Es un gasto exclusivo del dueño? (Ej: 5810, 5820)
-        owner_gls = self.rules.get("owner_expense_gl_accounts", [])
+        gl_str = str(gl_account).strip()
+        if not gl_str or gl_str.lower() in ["nan", "none"]:
+            return "UNKNOWN"
+
+        owner_gls = [str(g).strip() for g in self.rules.get("owner_expense_gl_accounts", [])]
         if gl_str in owner_gls:
             return "OWNER_EXPENSE"
-            
-        # 2. ¿Es un gasto estrictamente permitido para Bill-Back? (Ej: 5815, 5825)
-        allowed_gls = self.rules.get("allowed_gl_accounts", [])
+
+        allowed_gls = [str(g).strip() for g in self.rules.get("allowed_gl_accounts", [])]
         if allowed_gls and gl_str not in allowed_gls:
-            # Si hay una lista de permitidos y esta cuenta NO está ahí, la bloqueamos
-            return "ILLEGAL" 
-            
+            return "ILLEGAL"
+
         return "BILLABLE"
 
-    def find_tenant_at_date(self, match_key: str, service_date: Any, df_rent_roll: pd.DataFrame, raw_ocr_address: str = "") -> Optional[pd.Series]:
-        """Motor de búsqueda blindado con Ancla Numérica para evitar cruces de propiedades."""
-        if df_rent_roll.empty: return None
-        
-        # 1. INTENTO DE MATCH DIRECTO (Usando la llave generada)
-        matches = df_rent_roll[df_rent_roll['match_key'] == match_key]
-        
-        # 2. MOTOR DE TOKENS (Si el match directo falla)
-        if matches.empty and raw_ocr_address:
-            # Limpiar OCR
-            ocr_clean = re.sub(r"(?i)(GA|GEORGIA|ATLANTA|FOREST PARK|LAWRENCEVILLE|CUMMING|CLARKSTON|STONE MOUNTAIN|DECATUR|JONESBORO|\d{5})", "", str(raw_ocr_address))
-            ocr_clean = re.sub(r"[^A-Z0-9 ]", " ", ocr_clean.upper())
-            ocr_tokens = set(ocr_clean.split())
-            
-            # Palabras que NO suman puntos
-            stop_words = {"DR", "ST", "AVE", "LN", "BLVD", "RD", "CT", "WAY", "CIR", "PL", "DRIVE", "ROAD", "LANE", "STREET", "COURT", "APT", "UNIT", "STE", "SUITE", "NE", "NW", "SE", "SW"}
-            ocr_tokens_strong = ocr_tokens - stop_words
-            
-            best_score = 0
-            best_idx = None
-            
-            for idx, row in df_rent_roll.iterrows():
-                rr_prop = str(row.get('property_name', '')).upper()
-                rr_unit = str(row.get('unit_name', '')).upper()
-                
-                # --- Limpieza estricta de APT y UNIT ---
-                rr_unit_clean = re.sub(r"\b(APT|UNIT|STE|SUITE|#)\b", "", rr_unit).strip()
-                unit_num = re.sub(r"[^A-Z0-9]", "", rr_unit_clean)
-                
-                # --- Tokens de la Propiedad ---
-                rr_prop_clean = re.sub(r"(?i)(GA|GEORGIA|ATLANTA|FOREST PARK|LAWRENCEVILLE|CUMMING|CLARKSTON|STONE MOUNTAIN|DECATUR|JONESBORO|\d{5})", "", rr_prop)
-                rr_prop_tokens = set(re.sub(r"[^A-Z0-9 ]", " ", rr_prop_clean).split()) - stop_words
-                
-                prop_intersection = ocr_tokens_strong.intersection(rr_prop_tokens)
-                
-                if len(prop_intersection) == 0:
-                    continue
-                    
-                # --- EL ANCLA NUMÉRICA DE LA PROPIEDAD ---
-                ocr_numbers = {t for t in ocr_tokens_strong if any(c.isdigit() for c in t)}
-                prop_numbers = {t for t in rr_prop_tokens if any(c.isdigit() for c in t)}
-                
-                # ¿Tienen el mismo número de calle principal?
-                has_number_match = len(ocr_numbers.intersection(prop_numbers)) > 0
-                
-                # --- LÓGICA DE UNIDADES ESTRICTA ---
-                is_unit_match = False
-                
-                # Extraemos posibles números de apartamento del OCR (que no sean el número de la calle)
-                ocr_potential_units = ocr_numbers - prop_numbers
-
-                if unit_num == "" or unit_num == "UNIT": 
-                    # Es una casa (Single Family)
-                    is_unit_match = True 
-                elif unit_num in ocr_potential_units or unit_num in ocr_tokens:
-                    # Match exacto de apartamento (ej. "11" in {"11"})
-                    is_unit_match = True
-                elif unit_num.endswith("AR") and "A" in ocr_tokens:
-                    is_unit_match = True
-                elif unit_num.endswith("BR") and "B" in ocr_tokens:
-                    is_unit_match = True
-                else:
-                    # MATCH ESTRICTO: Si el Rent Roll dice Apt 11, y en el OCR no está el 11, RECHAZAR.
-                    is_unit_match = False
-
-                # --- CONDICIÓN DE VICTORIA ESTRICTA ---
-                if len(prop_numbers) > 0:
-                    valid_prop_match = has_number_match and len(prop_intersection) >= 2
-                else:
-                    valid_prop_match = len(prop_intersection) >= 2
-                
-                if is_unit_match and valid_prop_match:
-                    score = len(prop_intersection) + (5 if has_number_match else 0) + (10 if unit_num and unit_num in ocr_tokens else 0)
-                    if score > best_score:
-                        best_score = score
-                        best_idx = idx
-
-            if best_idx is not None:
-                matches = df_rent_roll.loc[[best_idx]]
-
-        # Si después de todo no hay un match claro de propiedad y unidad, retorna None
-        if matches.empty: 
+    def _to_date(self, val: Any) -> Optional[date]:
+        """Convierte cadenas ISO o date/datetime en un objeto date puro."""
+        if val is None:
             return None
-        
-        # 3. VERIFICACIÓN DE FECHAS ESTRICTA
-        try:
-            # Si no hay fecha de servicio, no podemos auditar, pero asumimos que el match es el inquilino actual
-            if pd.isna(service_date) or not str(service_date).strip():
-                return matches.iloc[0]
-
-            s_date = pd.to_datetime(service_date)
-            m_in = pd.to_datetime(matches['move_in_date'], errors='coerce').fillna(pd.Timestamp.min)
-            
-            # Muchos inquilinos current no tienen move_out_date, lo rellenamos con el futuro
-            m_out = pd.to_datetime(matches['move_out_date'], errors='coerce').fillna(pd.Timestamp.max)
-            
-            date_mask = (m_in <= s_date) & (m_out >= s_date)
-            final_matches = matches[date_mask]
-            
-            if final_matches.empty:
-                # ¡AQUÍ ESTABA EL ERROR CRÍTICO! 
-                # Antes retornaba matches.iloc[0] (el inquilino incorrecto). Ahora retorna None (Vacante)
-                return None
-            
-            return final_matches.iloc[0]
-        except Exception as e:
-            # Si las fechas están totalmente corruptas, preferimos reportarlo como vacante a cobrarle al vecino
+        if isinstance(val, date):
+            return val
+        s_val = str(val).strip()
+        if not s_val or s_val.lower() in ("none", "nan", "nat", "null"):
             return None
-
-    def validate_classification(self, property_name: str, unit_name: str, current_type: str, df_rent_roll: pd.DataFrame) -> str:
-        """Cruza los datos para asegurar que no facturamos áreas comunes por error."""
-        if self.is_common_area_exception(unit_name):
-            return "COMMON_AREA"
-        return current_type
-
-    def calculate_occupied_days(self, s_start: Any, s_end: Any, m_in: Any, m_out: Any) -> int:
-        """Calcula cuántos días vivió realmente el inquilino durante el ciclo de facturación."""
         try:
-            start = pd.to_datetime(s_start)
-            end = pd.to_datetime(s_end)
-            tenant_in = pd.to_datetime(m_in)
-            tenant_out = pd.to_datetime(m_out) if pd.notna(m_out) and str(m_out).strip() else pd.Timestamp.max
-            
-            # --- SEGURO ANTI-ALUCINACIÓN DE FECHAS ---
-            # Si Gemini invirtió las fechas (ej. Start: Feb 2, End: Jan 30), las enderezamos
-            if pd.notna(start) and pd.notna(end) and start > end:
-                start, end = end, start
-                
-            if pd.isna(start) or pd.isna(end):
-                return 30 # Fallback: Si no hay fechas, asumimos ciclo estándar
-                
-            overlap_start = max(start, tenant_in)
-            overlap_end = min(end, tenant_out)
-            
-            if overlap_start > overlap_end:
-                return 0
-                
-            return (overlap_end - overlap_start).days + 1
-        except Exception:
-            return 30 # En caso de error crítico con los formatos, asumimos el mes completo
+            # Parse ISO format YYYY-MM-DD
+            parts = s_val.split("T")[0].split("-")
+            if len(parts) == 3:
+                return date(int(parts[0]), int(parts[1]), int(parts[2]))
+        except (ValueError, IndexError):
+            pass
+        return None
 
-    def calculate_bill_back(self, appfolio_amount: float, service_days: int, occupied_days: int, ocr_current_charge: float) -> float:
-        """Calcula el monto proporcional en dólares ($) para cobrar al inquilino."""
-        # --- PARCHE PARA CICLOS MENSUALES SIN FECHA ---
-        # Si la resta de fechas de la IA dio 0 o negativo, forzamos un ciclo mensual de 30 días
-        if service_days <= 0:
-            service_days = 30  
-            
-        if occupied_days <= 0:
-            return 0.0
-            
-        base_amount = ocr_current_charge if ocr_current_charge > 0 else appfolio_amount
-        if base_amount <= 0:
-            return 0.0
-            
-        daily_rate = base_amount / service_days
-        
-        # Tope de seguridad: Nunca cobrarle a alguien más días de los que tiene el ciclo
-        final_occupied = min(occupied_days, service_days)
-        
-        return round(daily_rate * final_occupied, 2)
-    
-   
+    def calculate_occupied_days(
+        self,
+        s_start: Any,
+        s_end: Any,
+        m_in: Any,
+        m_out: Any,
+    ) -> int:
+        """
+        Calcula días ocupados entre s_start y s_end (inclusivo) usando tipos date puros.
+        """
+        start = self._to_date(s_start)
+        end = self._to_date(s_end)
+        tenant_in = self._to_date(m_in)
+        tenant_out = self._to_date(m_out) if m_out is not None else None
+
+        if start is None or end is None or tenant_in is None or start > end:
+            return 0
+
+        effective_out = tenant_out if tenant_out is not None else date.max
+
+        overlap_start = max(start, tenant_in)
+        overlap_end = min(end, effective_out)
+
+        if overlap_start > overlap_end:
+            return 0
+
+        return (overlap_end - overlap_start).days + 1
+
+    def calculate_bill_back(
+        self,
+        amount: Decimal,
+        service_days: int,
+        occupied_days: int,
+    ) -> Decimal:
+        """
+        Cálculo puro de prorrateo en Decimal sin pasajes por float ni parámetros legacy.
+        """
+        if service_days <= 0 or occupied_days <= 0:
+            return Decimal("0.00")
+
+        if not isinstance(amount, Decimal):
+            amount = Decimal(str(amount))
+
+        if amount <= Decimal("0.00"):
+            return Decimal("0.00")
+
+        capped_occupied = min(occupied_days, service_days)
+        result = (amount * Decimal(capped_occupied)) / Decimal(service_days)
+
+        return result.quantize(self.MONEY_QUANTUM, rounding=ROUND_HALF_UP)
