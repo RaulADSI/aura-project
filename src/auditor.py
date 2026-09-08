@@ -2,8 +2,8 @@ import json
 import logging
 import os
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, List, Optional, Tuple
+from decimal import Decimal
+from typing import Any, List, Optional
 
 from src.domain.models import (
     AccountingContext,
@@ -14,13 +14,14 @@ from src.domain.models import (
     InvoiceData,
     OccupancyContext,
     PropertyContext,
+    ZERO_MONEY,
+    quantize_money,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class AuditEngine:
-    MONEY_QUANTUM = Decimal("0.01")
 
     def __init__(self, rules_path: str):
         """Inicializa el motor cargando las reglas de negocio desde utility_rules.json."""
@@ -67,7 +68,7 @@ class AuditEngine:
             return AuditResult(
                 request=request,
                 status=AuditStatus.ANOMALY_DETECTED,
-                calculated_bill_back=Decimal("0.00"),
+                calculated_bill_back=ZERO_MONEY,
                 total_service_days=0,
                 occupied_days=0,
                 anomalies=tuple(anomalies),
@@ -80,7 +81,7 @@ class AuditEngine:
             return AuditResult(
                 request=request,
                 status=AuditStatus.OWNER_EXPENSE,
-                calculated_bill_back=Decimal("0.00"),
+                calculated_bill_back=ZERO_MONEY,
                 total_service_days=total_service_days,
                 occupied_days=0,
                 anomalies=tuple(anomalies),
@@ -90,7 +91,7 @@ class AuditEngine:
             return AuditResult(
                 request=request,
                 status=AuditStatus.ILLEGAL_GL,
-                calculated_bill_back=Decimal("0.00"),
+                calculated_bill_back=ZERO_MONEY,
                 total_service_days=total_service_days,
                 occupied_days=0,
                 anomalies=tuple(anomalies),
@@ -107,7 +108,7 @@ class AuditEngine:
             return AuditResult(
                 request=request,
                 status=AuditStatus.COMMON_AREA,
-                calculated_bill_back=Decimal("0.00"),
+                calculated_bill_back=ZERO_MONEY,
                 total_service_days=total_service_days,
                 occupied_days=0,
                 anomalies=tuple(anomalies),
@@ -115,19 +116,20 @@ class AuditEngine:
             )
 
         # 5. Calcular occupied_days (Pure Date Logic)
-        occupied_days = self.calculate_occupied_days(
+        raw_occupied_days = self.calculate_occupied_days(
             inv.service_start_date,
             inv.service_end_date,
             occ.move_in_date,
             occ.move_out_date,
         )
+        occupied_days = min(raw_occupied_days, total_service_days)
 
         # 6. Evaluate Vacant
         if occupied_days == 0 or occ.tenant_name is None:
             return AuditResult(
                 request=request,
                 status=AuditStatus.VACANT,
-                calculated_bill_back=Decimal("0.00"),
+                calculated_bill_back=ZERO_MONEY,
                 total_service_days=total_service_days,
                 occupied_days=0,
                 anomalies=tuple(anomalies),
@@ -195,7 +197,6 @@ class AuditEngine:
         if not s_val or s_val.lower() in ("none", "nan", "nat", "null"):
             return None
         try:
-            # Parse ISO format YYYY-MM-DD
             parts = s_val.split("T")[0].split("-")
             if len(parts) == 3:
                 return date(int(parts[0]), int(parts[1]), int(parts[2]))
@@ -238,18 +239,18 @@ class AuditEngine:
         occupied_days: int,
     ) -> Decimal:
         """
-        Cálculo puro de prorrateo en Decimal sin pasajes por float ni parámetros legacy.
+        Cálculo puro de prorrateo en Decimal cuantizado mediante primitive de dominio.
         """
         if service_days <= 0 or occupied_days <= 0:
-            return Decimal("0.00")
+            return ZERO_MONEY
 
         if not isinstance(amount, Decimal):
             amount = Decimal(str(amount))
 
-        if amount <= Decimal("0.00"):
-            return Decimal("0.00")
+        if amount <= ZERO_MONEY:
+            return ZERO_MONEY
 
         capped_occupied = min(occupied_days, service_days)
         result = (amount * Decimal(capped_occupied)) / Decimal(service_days)
 
-        return result.quantize(self.MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+        return quantize_money(result)

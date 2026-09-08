@@ -137,6 +137,7 @@ class TestAppFolioAdapter(unittest.TestCase):
 
     def test_has_no_dependency_on_data_extractor(self):
         self.assertFalse(hasattr(self.adapter, "extractor"))
+        self.assertFalse(hasattr(self.adapter, "DataExtractor"))
 
     def test_loads_rent_roll_contexts(self):
         contexts = self.adapter.load_rent_roll_contexts("rent_roll.json")
