@@ -1,6 +1,8 @@
 import json
 import os
 from src.adapters.audit_request_builder import AuditRequestBuilder
+from src.adapters.historical_fixture_adapter import HistoricalFixtureAdapter
+from src.adapters.property_resolver import PropertyResolver
 from src.auditor import AuditEngine
 from src.reporter import AuditReporter
 
@@ -19,13 +21,29 @@ def run_aura_flow(raw_autostack_payload=None):
     print("=" * 60 + "\n")
 
     # 1. Cargar payload estructurado (simulado de AutoStack o cache de transición)
-    if raw_autostack_payload is None:
+    using_historical_fixture = raw_autostack_payload is None
+    if using_historical_fixture:
         if os.path.exists(CACHE_DATA_PATH):
             with open(CACHE_DATA_PATH, "r", encoding="utf-8") as f:
                 raw_autostack_payload = json.load(f)
         else:
             print("[!] ERROR: No se encontraron datos de entrada de AutoStack.")
             return
+
+    # Translate only the frozen historical cache into the current AutoStack contract.
+    # Current/explicit AutoStack payloads bypass this compatibility layer entirely.
+    if using_historical_fixture:
+        rent_roll_path = os.path.join(DATA_PATH, "rent_roll.json")
+        resolver = None
+        if os.path.exists(rent_roll_path):
+            with open(rent_roll_path, "r", encoding="utf-8") as f:
+                rent_roll_catalog = json.load(f)
+            if isinstance(rent_roll_catalog, dict):
+                resolver = PropertyResolver(rent_roll_catalog.keys())
+        raw_autostack_payload = HistoricalFixtureAdapter.transform_batch(
+            raw_autostack_payload,
+            property_resolver=resolver,
+        )
 
     # Normalización de nombres de campos de entrada hacia el contrato AutoStack
     formatted_payload = []
@@ -41,8 +59,8 @@ def run_aura_flow(raw_autostack_payload=None):
             "invoice_number": item.get("ocr_file"),
             "account_number": str(item.get("account_number", "")),
             "vendor_name": str(item.get("utility_vendor", "UNKNOWN VENDOR")),
-            "property_name": str(item.get("service_address", "")),
-            "unit_name": "",
+            "property_name": str(item.get("property_name", "")),
+            "unit_name": str(item.get("unit_name", "")),
             "service_start_date": item.get("service_start"),
             "service_end_date": item.get("service_end"),
             "amount": amt_str,

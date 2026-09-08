@@ -31,9 +31,9 @@ class AuditReporter:
     def add_audit_result(self, result: AuditResult) -> None:
         """Registra un objeto AuditResult directamente en el reportero."""
         req = result.request
-        inv_amount = req.invoice.amount
+        expected_bill_back = result.calculated_bill_back
         af_paid = req.accounting.appfolio_amount_paid
-        variance = inv_amount - af_paid
+        variance = expected_bill_back - af_paid
 
         status_str = result.status.name
 
@@ -53,7 +53,7 @@ class AuditReporter:
             "Property": str(req.property.property_name),
             "Unit": str(req.property.unit_name),
             "Status": status_str,
-            "Calculated_BillBack": float(result.calculated_bill_back),
+            "Calculated_BillBack": float(expected_bill_back),
             "AppFolio_BillBack": float(af_paid),
             "Variance": float(variance),
             "Notes": result.notes
@@ -114,7 +114,7 @@ class AuditReporter:
 
                 email_text += f"* **{row['Property']} - {row['Unit']}** (Inv: {row['Invoice_ID']})\n"
                 email_text += f"    * **{tenant_info}**\n"
-                email_text += f"    * **Amount to Bill:** ${row['Calculated_BillBack']:.2f} *(Total Invoice: ${row['Variance']:.2f})*\n"
+                email_text += f"    * **Amount to Bill:** ${row['Calculated_BillBack']:.2f} *(Variance vs AppFolio: ${row['Variance']:.2f})*\n"
         else:
             email_text += "*No pending bill-backs detected in this run.*\n"
 

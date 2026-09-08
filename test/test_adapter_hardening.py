@@ -186,7 +186,31 @@ class TestAuditRequestBuilderHardening(unittest.TestCase):
         self.assertEqual(req.property.unit_name, "Apt 99")
         self.assertIsNone(req.occupancy.tenant_name)
         # Check warning log was emitted
-        self.assertTrue(any("Rent Roll context not found" in log for log in cm.output))
+        self.assertTrue(any("rent_roll_context_not_found" in log for log in cm.output))
+
+    def test_unmatched_property_produces_anomaly_flag_and_zero_bill_back(self):
+        from src.auditor import AuditEngine
+        from src.domain.models import AuditAnomalyFlag, AuditStatus
+
+        payload = [{
+            "invoice_id": "INV-UNMATCHED-1",
+            "account_number": "ACC-UNMATCHED",
+            "vendor_name": "GA POWER",
+            "property_name": "Nonexistent Property 999",
+            "unit_name": "Apt 99",
+            "amount": "100.00",
+            "service_start_date": "2026-01-01",
+            "service_end_date": "2026-01-30",
+        }]
+
+        requests = self.builder.build_requests(payload)
+        engine = AuditEngine("config/utility_rules.json")
+        result = engine.audit(requests[0])
+
+        self.assertIn(AuditAnomalyFlag.MISSING_RENT_ROLL_CONTEXT, result.anomalies)
+        self.assertEqual(result.status, AuditStatus.VACANT)
+        self.assertEqual(result.calculated_bill_back, Decimal("0.00"))
+
 
 
 
