@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from src.adapters.appfolio_adapter import AppFolioAdapter
 from src.adapters.autostack_adapter import AutoStackAdapter
 from src.domain.models import (
@@ -13,9 +13,9 @@ from src.domain.normalization import generate_match_key
 
 class AuditRequestBuilder:
     """
-    Compone InvoiceData de AutoStack con los contextos de propiedad,
-    ocupación y contabilidad de AppFolio utilizando el match_key derivado
-    de property_name y unit_name.
+    Composes AutoStack InvoiceData with AppFolio Property, Occupancy, and Accounting contexts.
+    Uses property_name and unit_name from AutoStack items to generate the correlation match_key,
+    ensuring deterministic assembly without guessing via utility account numbers.
     """
 
     def __init__(self, data_path: str):
@@ -39,7 +39,7 @@ class AuditRequestBuilder:
         for idx, item in enumerate(raw_autostack_data):
             inv = invoices[idx]
 
-            # Correlación basada en propiedad y unidad del origen
+            # Correlate using property_name and unit_name provided by AutoStack
             prop_name = str(item.get("property_name", "")).strip()
             unit_name = str(item.get("unit_name", "")).strip()
 
@@ -48,7 +48,7 @@ class AuditRequestBuilder:
             if match_key and match_key in rent_roll_map:
                 prop_ctx, occ_ctx = rent_roll_map[match_key]
             else:
-                # Inmueble no encontrado en el Rent Roll (Unmatched)
+                # Unmatched in Rent Roll
                 prop_ctx = PropertyContext(
                     property_id=None,
                     property_name=prop_name if prop_name else "Unmatched Property",

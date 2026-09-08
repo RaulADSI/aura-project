@@ -23,8 +23,8 @@ class AppFolioAdapter:
         self, file_name: str = "rent_roll.json"
     ) -> Dict[str, Tuple[PropertyContext, OccupancyContext]]:
         """
-        Carga el Rent Roll y mapea a Contextos de Dominio por match_key.
-        Sin dependencias de DataExtractor ni validación de negocio legacy.
+        Loads Rent Roll data and maps it to Domain Contexts by match_key.
+        Completely decoupled from legacy extraction and business validation.
         """
         path = os.path.join(self.data_path, file_name)
         if not os.path.exists(path):
@@ -34,7 +34,7 @@ class AppFolioAdapter:
             data = json.load(f)
 
         if isinstance(data, list):
-            raise ValueError(f"Formato legacy detectado en {file_name}. Se requiere diccionario jerárquico.")
+            raise ValueError(f"Legacy array format detected in {file_name}. Expected hierarchical dict.")
 
         contexts: Dict[str, Tuple[PropertyContext, OccupancyContext]] = {}
 
@@ -75,8 +75,8 @@ class AppFolioAdapter:
         self, file_name: str = "appfolio_bills.csv"
     ) -> Dict[str, AccountingContext]:
         """
-        Carga y agrega AppFolio Bills en AccountingContext mapeados por match_key.
-        Filtra y prioriza cuentas GL de utilidades (58XX) cuando existen múltiples líneas.
+        Loads and aggregates AppFolio Bills into AccountingContext mapped by match_key.
+        Filters for utility GL accounts when multiple GL lines exist.
         """
         path = os.path.join(self.data_path, file_name)
         if not os.path.exists(path):
@@ -121,7 +121,7 @@ class AppFolioAdapter:
             else:
                 group["gl_code"] = ""
 
-            # Priorizar cuentas de utilidades (código que comienza en 58)
+            # Prioritize utility GLs (starting with 58)
             utility_rows = group[group["gl_code"].str.startswith("58", na=False)]
 
             if not utility_rows.empty:

@@ -1,5 +1,6 @@
 import re
-import pandas as pd
+from typing import Optional
+
 
 STREET_REPLACEMENTS = {
     "STREET": "ST",
@@ -11,16 +12,20 @@ STREET_REPLACEMENTS = {
 }
 
 
-def normalize_address(text: str) -> str:
-    """Normaliza direcciones a una clave alfanumérica determinista."""
-    if not text or pd.isna(text):
+def normalize_address(text: Optional[str]) -> str:
+    """
+    Normalize addresses to a deterministic alphanumeric key.
+    Pure Python implementation without Pandas dependency.
+    """
+    if text is None:
         return ""
 
     raw = str(text).strip()
-    if raw.lower() in {"nan", "none"}:
+    if not raw or raw.lower() in {"nan", "none", "null"}:
         return ""
 
     s = raw.upper()
+
     for k, v in STREET_REPLACEMENTS.items():
         s = s.replace(k, v)
 
@@ -46,7 +51,7 @@ def generate_match_key(property_name: str, unit_name: str) -> str:
     if not prop:
         return ""
 
-    if not unit or unit in prop:
+    if not unit or unit == "UNIT" or unit in prop:
         return prop
 
     return f"{prop}{unit}"

@@ -1,7 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Any, Dict, List
-import pandas as pd
+from typing import Any, Dict, List, Optional
 
 from src.domain.models import InvoiceData
 
@@ -113,13 +112,27 @@ class AutoStackAdapter:
             rounding=ROUND_HALF_UP,
         )
 
-    def _parse_date(self, value: Any) -> date | None:
+    def _parse_date(self, value: Any) -> Optional[date]:
         if value is None:
             return None
 
-        parsed = pd.to_datetime(value, errors="coerce")
+        if isinstance(value, datetime):
+            return value.date()
 
-        if pd.isna(parsed):
+        if isinstance(value, date):
+            return value
+
+        text = str(value).strip()
+        if not text or text.lower() in ("none", "nan", "nat", "null"):
             return None
 
-        return parsed.date()
+        # Clean string from ISO time component if present
+        clean_text = text.split("T")[0].split(" ")[0]
+
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y"):
+            try:
+                return datetime.strptime(clean_text, fmt).date()
+            except ValueError:
+                pass
+
+        return None
