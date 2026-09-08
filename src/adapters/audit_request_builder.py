@@ -1,6 +1,9 @@
+import logging
 from typing import Any, Dict, List, Optional
+
 from src.adapters.appfolio_adapter import AppFolioAdapter
 from src.adapters.autostack_adapter import AutoStackAdapter
+from src.adapters.utils import sanitize_string
 from src.domain.models import (
     AccountingContext,
     AuditRequest,
@@ -9,6 +12,8 @@ from src.domain.models import (
     PropertyContext,
 )
 from src.domain.normalization import generate_match_key
+
+logger = logging.getLogger(__name__)
 
 
 class AuditRequestBuilder:
@@ -39,16 +44,22 @@ class AuditRequestBuilder:
         for idx, item in enumerate(raw_autostack_data):
             inv = invoices[idx]
 
-            # Correlate using property_name and unit_name provided by AutoStack
-            prop_name = str(item.get("property_name", "")).strip()
-            unit_name = str(item.get("unit_name", "")).strip()
+            prop_name = sanitize_string(item.get("property_name"))
+            unit_name = sanitize_string(item.get("unit_name"))
 
             match_key = generate_match_key(prop_name, unit_name)
 
             if match_key and match_key in rent_roll_map:
                 prop_ctx, occ_ctx = rent_roll_map[match_key]
             else:
-                # Unmatched in Rent Roll
+                logger.warning(
+                    "Rent Roll context not found for invoice '%s' (property: '%s', unit: '%s', match_key: '%s'). "
+                    "Passing request to domain for MISSING_RENT_ROLL_CONTEXT evaluation.",
+                    inv.invoice_id,
+                    prop_name,
+                    unit_name,
+                    match_key,
+                )
                 prop_ctx = PropertyContext(
                     property_id=None,
                     property_name=prop_name if prop_name else "Unmatched Property",

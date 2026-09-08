@@ -51,7 +51,7 @@ def generate_match_key(property_name: str, unit_name: str) -> str:
     if not prop:
         return ""
 
-    if not unit or unit == "UNIT" or unit in prop:
+    if not unit or unit == "UNIT" or unit == prop:
         return prop
 
     return f"{prop}{unit}"

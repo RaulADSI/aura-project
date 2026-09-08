@@ -30,16 +30,22 @@ def run_aura_flow(raw_autostack_payload=None):
     # Normalización de nombres de campos de entrada hacia el contrato AutoStack
     formatted_payload = []
     for idx, item in enumerate(raw_autostack_payload):
+        amt_val = item.get("current_cycle_charges", "0.00")
+        if isinstance(amt_val, (int, float)):
+            amt_str = f"{amt_val:.2f}"
+        else:
+            amt_str = str(amt_val)
+
         formatted_payload.append({
-            "invoice_id": item.get("account_number") or f"INV-{idx+1}",
+            "invoice_id": str(item.get("account_number") or f"INV-{idx+1}"),
             "invoice_number": item.get("ocr_file"),
-            "account_number": item.get("account_number", ""),
-            "vendor_name": item.get("utility_vendor", "UNKNOWN VENDOR"),
-            "property_name": item.get("service_address", ""),
+            "account_number": str(item.get("account_number", "")),
+            "vendor_name": str(item.get("utility_vendor", "UNKNOWN VENDOR")),
+            "property_name": str(item.get("service_address", "")),
             "unit_name": "",
             "service_start_date": item.get("service_start"),
             "service_end_date": item.get("service_end"),
-            "amount": item.get("current_cycle_charges", 0.0),
+            "amount": amt_str,
         })
 
     # 2. Inicializar adaptadores, motor y reportero

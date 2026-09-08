@@ -1,57 +1,90 @@
-from datetime import date, datetime
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional
-
+from src.adapters.utils import (
+    AdapterValidationError,
+    parse_decimal,
+    parse_optional_iso_date,
+    require_string,
+    sanitize_string,
+)
 from src.domain.models import InvoiceData
-
-
-class AdapterValidationError(ValueError):
-    """Indica que un payload externo no cumple el contrato requerido."""
-    pass
 
 
 class AutoStackAdapter:
 
-    MONEY_QUANTUM = Decimal("0.01")
-
-    REQUIRED_FIELDS = (
-        "invoice_id",
-        "account_number",
-        "vendor_name",
-        "amount",
-    )
+    SOURCE_NAME = "AutoStack"
 
     def parse_invoice_payload(
         self,
         raw_data: List[Dict[str, Any]],
     ) -> List[InvoiceData]:
+        if not isinstance(raw_data, list):
+            raise AdapterValidationError(
+                "AutoStack payload must be a list of records",
+                source=self.SOURCE_NAME,
+            )
+
         invoices: List[InvoiceData] = []
 
         for index, item in enumerate(raw_data):
-            self._validate_required_fields(item, index)
+            if not isinstance(item, dict):
+                raise AdapterValidationError(
+                    f"AutoStack record at index {index} must be a dictionary",
+                    source=self.SOURCE_NAME,
+                    record_id=f"index-{index}",
+                    value=item,
+                )
 
-            invoice_id = str(item["invoice_id"]).strip()
-            invoice_number = item.get("invoice_number")
-            account_number = str(item["account_number"]).strip()
-            vendor_name = str(item["vendor_name"]).strip()
+            rec_id = sanitize_string(item.get("invoice_id")) or f"index-{index}"
 
-            service_start = self._parse_date(
-                item.get("service_start_date")
+            invoice_id = require_string(
+                item.get("invoice_id"),
+                field="invoice_id",
+                record_id=rec_id,
+                source=self.SOURCE_NAME,
             )
-            service_end = self._parse_date(
-                item.get("service_end_date")
+
+            account_number = require_string(
+                item.get("account_number"),
+                field="account_number",
+                record_id=rec_id,
+                source=self.SOURCE_NAME,
             )
 
-            amount = self._parse_amount(item["amount"], index)
+            vendor_name = require_string(
+                item.get("vendor_name"),
+                field="vendor_name",
+                record_id=rec_id,
+                source=self.SOURCE_NAME,
+            )
+
+            amount = parse_decimal(
+                item.get("amount"),
+                field="amount",
+                record_id=rec_id,
+                source=self.SOURCE_NAME,
+            )
+
+            inv_num_clean = sanitize_string(item.get("invoice_number"))
+            invoice_number = inv_num_clean if inv_num_clean else None
+
+            service_start = parse_optional_iso_date(
+                item.get("service_start_date"),
+                field="service_start_date",
+                record_id=rec_id,
+                source=self.SOURCE_NAME,
+            )
+
+            service_end = parse_optional_iso_date(
+                item.get("service_end_date"),
+                field="service_end_date",
+                record_id=rec_id,
+                source=self.SOURCE_NAME,
+            )
 
             invoices.append(
                 InvoiceData(
                     invoice_id=invoice_id,
-                    invoice_number=(
-                        str(invoice_number).strip()
-                        if invoice_number is not None
-                        else None
-                    ),
+                    invoice_number=invoice_number,
                     account_number=account_number,
                     vendor_name=vendor_name,
                     service_start_date=service_start,
@@ -61,78 +94,3 @@ class AutoStackAdapter:
             )
 
         return invoices
-
-    def _validate_required_fields(
-        self,
-        item: Dict[str, Any],
-        index: int,
-    ) -> None:
-        if not isinstance(item, dict):
-            raise AdapterValidationError(
-                f"AutoStack record {index} must be a dictionary"
-            )
-
-        missing = []
-
-        for field in self.REQUIRED_FIELDS:
-            value = item.get(field)
-
-            if value is None:
-                missing.append(field)
-                continue
-
-            if isinstance(value, str) and not value.strip():
-                missing.append(field)
-
-        if missing:
-            raise AdapterValidationError(
-                f"AutoStack record {index} missing required fields: "
-                f"{', '.join(missing)}"
-            )
-
-    def _parse_amount(
-        self,
-        value: Any,
-        index: int,
-    ) -> Decimal:
-        try:
-            amount = Decimal(str(value).strip())
-        except (InvalidOperation, AttributeError):
-            raise AdapterValidationError(
-                f"AutoStack record {index} has invalid amount: {value!r}"
-            )
-
-        if not amount.is_finite():
-            raise AdapterValidationError(
-                f"AutoStack record {index} has non-finite amount: {value!r}"
-            )
-
-        return amount.quantize(
-            self.MONEY_QUANTUM,
-            rounding=ROUND_HALF_UP,
-        )
-
-    def _parse_date(self, value: Any) -> Optional[date]:
-        if value is None:
-            return None
-
-        if isinstance(value, datetime):
-            return value.date()
-
-        if isinstance(value, date):
-            return value
-
-        text = str(value).strip()
-        if not text or text.lower() in ("none", "nan", "nat", "null"):
-            return None
-
-        # Clean string from ISO time component if present
-        clean_text = text.split("T")[0].split(" ")[0]
-
-        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y"):
-            try:
-                return datetime.strptime(clean_text, fmt).date()
-            except ValueError:
-                pass
-
-        return None
