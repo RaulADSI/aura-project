@@ -1,22 +1,14 @@
-# Data
-data/
-*.csv
-*.xlsx
+# Secrets / environment
+.env
+*.env
+.env.*
 
 # Python
 __pycache__/
-*.pyc
-.env
+*.py[cod]
+.pytest_cache/
 
-# Logs
-logs/
+# Local / generated outputs
 *.log
-
-# Local databases
-*.db
-*.sqlite
-*.sqlite3
-
-# OS
+~$*.xlsx
 .DS_Store
-Thumbs.db

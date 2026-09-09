@@ -53,12 +53,14 @@ class AuditRequestBuilder:
                 prop_ctx, occ_ctx = rent_roll_map[match_key]
             else:
                 logger.warning(
-                    "Rent Roll context not found for invoice '%s' (property: '%s', unit: '%s', match_key: '%s'). "
-                    "Passing request to domain for MISSING_RENT_ROLL_CONTEXT evaluation.",
-                    inv.invoice_id,
-                    prop_name,
-                    unit_name,
-                    match_key,
+                    "rent_roll_context_not_found",
+                    extra={
+                        "event": "rent_roll_context_not_found",
+                        "invoice_id": inv.invoice_id,
+                        "property_name": prop_name,
+                        "unit_name": unit_name,
+                        "match_key": match_key,
+                    },
                 )
                 prop_ctx = PropertyContext(
                     property_id=None,

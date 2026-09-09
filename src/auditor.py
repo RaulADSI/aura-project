@@ -60,7 +60,7 @@ class AuditEngine:
             is_valid_period = True
 
         # 2. Check Rent Roll Context
-        if prop.property_name == "Unmatched Property" or prop.unit_name == "UNKNOWN":
+        if prop.property_name == "Unmatched Property" or prop.unit_name == "UNKNOWN" or (occ.tenant_name is None and occ.unit_status is None and occ.move_in_date is None):
             anomalies.append(AuditAnomalyFlag.MISSING_RENT_ROLL_CONTEXT)
 
         # Si el período de servicio es inválido/faltante -> ANOMALY_DETECTED inmediatamente
