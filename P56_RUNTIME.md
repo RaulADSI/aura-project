@@ -37,7 +37,7 @@ python -m aura.run --invoice 54150b6d-9c0d-4dad-add7-b38274101dff --facts-versio
 This selects the reproccessed B4 snapshot only. It does not include it in the
 canonical run or change operational eligibility.
 
-## Verification and acceptance status — 2026-09-09
+## Verification and acceptance status — 2026-09-10
 
 ```powershell
 python -X utf8 -m unittest discover -s test -q
@@ -45,32 +45,28 @@ $env:P56_REGRESSION_DB_PATH = $env:AUTOSTACK_DB_PATH
 python -X utf8 -m unittest test.test_p56_runtime.TestRealP56Acceptance -v
 ```
 
-The real acceptance test asserts 40 canonical Georgia Power snapshots, all 40
-identities classified, 31 UNIT, 9 COMMON_AREA, 29 VACANT, 2 BILLABLE, and the
-invoice UUID/account/unit/amount of both charges, totaling $578.26. It is opt-in
-because the mutable production database is external. Synthetic SQLite tests
-exercise the same application, partial occupancy, all counts, exact selection,
-missing facts and CSV parsing; they are not proof of the real 40-invoice cut.
+The historical frozen regression fixture remains useful for validating the
+original 40-invoice Georgia Power cut: 31 UNIT, 9 COMMON_AREA, 29 VACANT,
+2 BILLABLE, and total bill-back of $578.26. Those counts are fixture-specific
+and are not a production runtime invariant because the operational AutoStack
+population is mutable.
 
-Live verification used `C:/autostack/auto-stack/storage/autostack.db` and
-`C:/Users/strategic/Downloads/rent_roll-20260908.csv`. The referenced
-`/mnt/data/rent_roll-20260908(1).csv` is unavailable on this Windows host.
-
-Observed: 43 canonical snapshots, comprising 38 Georgia Power and 5 WM.
-All 38 Georgia Power identities resolve: 30 UNIT, 8 COMMON_AREA. Audit results:
-28 VACANT, 8 COMMON_AREA, 2 BILLABLE. The two charges are:
+Current runtime acceptance against the active AutoStack database produced
+43 canonical snapshots: 38 Georgia Power and 5 WM. All 38 Georgia Power
+identities resolved: 30 UNIT and 8 COMMON_AREA. Audit results were 28 VACANT,
+8 COMMON_AREA, and 2 BILLABLE. The two tenant charges were:
 
 | Invoice UUID | Account | Unit | Bill-back |
 | --- | --- | --- | --- |
 | 4f5f68bc-a316-4884-98cd-b5c2819f067d | 9385974335 | D6 | $294.41 |
 | b7fc2eee-be22-4044-bd23-8aa42819c5a6 | 1006974233 | H1 | $283.85 |
 
-Total is **$578.26**. The five WM snapshots have unresolved unit identities.
+Total is **$578.26**. The five WM snapshots remain visible as
+`UNIT_UNRESOLVED` rejections and do not affect the validated Georgia Power
+bill-back decisions.
 
-**P5.6 acceptance remains open**: the live DB has no utility facts row for the
-DISPATCHED HSEB invoice `933e112f-5bc0-4ea2-a6f0-c2cd9360b00e` (account
-5920975065) or DISPATCHED B4 invoice `cb85d876-b816-4d45-a563-6c28ae9d2473`
-(account 8923974278). The B4 replacement UUID shown above has facts but is
-DISPATCH_FAILED, excluded by the frozen canonical policy. No database rows or
-statuses were changed. Restore the intended AutoStack facts/operational cut
-upstream before requiring the real acceptance test to pass. P6 is not opened.
+**P5.6 acceptance is CLOSED.** The change from the original frozen 40-invoice
+Georgia Power regression population to the current 38-invoice operational
+population is explained by the mutable AutoStack dataset and must not be treated
+as a runtime regression. P5.6 calculates decisions only; P6 persistence and P7
+delivery are separate downstream milestones.
