@@ -108,7 +108,7 @@ class TestSqliteDecisionRepository(unittest.TestCase):
 
     def test_money_is_stored_as_text_not_real(self):
         self.repo.save(make_decision())
-        with sqlite3.connect(self.repo.path) as conn:
+        with contextlib.closing(sqlite3.connect(self.repo.path)) as conn:
             row = conn.execute(
                 "SELECT typeof(current_service_amount), typeof(bill_back_amount), current_service_amount FROM bill_back_decisions"
             ).fetchone()
@@ -186,7 +186,7 @@ class TestP6EndToEnd(unittest.TestCase):
 class TestRulesMetadata(unittest.TestCase):
     def test_real_rules_are_versioned_and_hashed(self):
         metadata = load_rules_metadata(ROOT / "config/utility_rules.json")
-        self.assertEqual(metadata.rule_version, "1")
+        self.assertEqual(metadata.rule_version, "2")
         self.assertEqual(len(metadata.rules_hash), 64)
 
 

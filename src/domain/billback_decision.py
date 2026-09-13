@@ -24,6 +24,7 @@ PERSISTABLE_AUDIT_STATUSES = frozenset({
     AuditStatus.BILLABLE,
     AuditStatus.VACANT,
     AuditStatus.COMMON_AREA,
+    AuditStatus.NON_BILLABLE,
 })
 
 
@@ -52,9 +53,9 @@ class BillBackDecision:
     unit_name: str
     tenant_name: str | None
 
-    service_period_start: date
-    service_period_end: date
-    current_service_amount: Decimal
+    service_period_start: date | None
+    service_period_end: date | None
+    current_service_amount: Decimal | None
     occupied_days: int
     total_service_days: int
     bill_back_amount: Decimal
@@ -87,13 +88,19 @@ class BillBackDecision:
             if not self.tenant_name.strip():
                 raise ValueError("tenant_name must be None instead of blank")
 
-        if not isinstance(self.service_period_start, date) or not isinstance(self.service_period_end, date):
-            raise TypeError("service period values must be date")
-        if self.service_period_start > self.service_period_end:
+        zero_eligibility = self.classification in {AuditStatus.COMMON_AREA, AuditStatus.NON_BILLABLE}
+        for value in (self.service_period_start, self.service_period_end):
+            if value is None and zero_eligibility:
+                continue
+            if not isinstance(value, date):
+                raise TypeError("service period values must be date")
+        if self.service_period_start is not None and self.service_period_end is not None and self.service_period_start > self.service_period_end:
             raise ValueError("service_period_start cannot be after service_period_end")
 
         for field_name in ("current_service_amount", "bill_back_amount"):
             value = getattr(self, field_name)
+            if field_name == "current_service_amount" and value is None and zero_eligibility:
+                continue
             if not isinstance(value, Decimal):
                 raise TypeError(f"{field_name} must be Decimal, got {type(value).__name__}")
             if value < ZERO_MONEY:
@@ -106,7 +113,7 @@ class BillBackDecision:
 
         if self.classification not in PERSISTABLE_AUDIT_STATUSES:
             raise ValueError(f"classification {self.classification.name} is not a persistable bill-back decision")
-        if self.classification in {AuditStatus.VACANT, AuditStatus.COMMON_AREA}:
+        if self.classification in {AuditStatus.VACANT, AuditStatus.COMMON_AREA, AuditStatus.NON_BILLABLE}:
             if quantize_money(self.bill_back_amount) != ZERO_MONEY:
                 raise ValueError(f"{self.classification.name} decision requires zero bill-back")
 

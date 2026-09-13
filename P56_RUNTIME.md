@@ -1,5 +1,35 @@
 # P5.6 — Integration Runtime
 
+Current eligibility milestone: see `UTILITY_BILLBACK_ELIGIBILITY.md`. Explicit
+zero decisions now precede amount/occupancy requirements; unknown services are
+rejected for review. The historical acceptance notes below describe the earlier
+dataset cut and are not the current live database counts.
+
+## Additive facts metadata: Georgia Power FINAL
+
+`StructuredUtilityInvoice.bill_type` exposes the persisted
+`utility_invoice_details.bill_type` as optional immutable text. `FINAL` is
+preserved literally, including case and surrounding whitespace for nonblank
+values, without inference from vendor, filename, amount or raw text. NULL,
+blank database values and older schemas lacking the column map to `None`,
+not STANDARD. Unknown nonblank values remain source metadata. This is an
+additive contract-v1 field; existing constructors remain compatible.
+
+Georgia Power FINAL continues through the same audit pipeline using only
+`current_service_amount`. Past due balances and total due are never substituted
+or added. Missing current service charges are rejected. No new final-bill
+business strategy is introduced. Canonical remains READY / DISPATCHING /
+DISPATCHED; bill type does not grant operational eligibility. Invoice number
+and issue date may remain absent.
+
+Gas South consolidated services and signed transfers are **not supported for
+bill-back calculation by this integration**. Supporting them requires a
+structured service/adjustment contract and explicit billable-charge semantics.
+`new_charges_amount` must not become `current_service_amount` by fallback;
+`raw_billing_summary` is not a structured contract. Consolidated invoices in
+REVIEW_REQUIRED remain excluded from canonical. No subaccount reader or
+consolidated calculation is added by this metadata change.
+
 Production entry point, from the repository root:
 
 ```powershell

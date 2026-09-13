@@ -1,6 +1,8 @@
 # P6 — Bill-back Decision Persistence
 
-P6 persists the business decisions already calculated by the closed P5.6 runtime.
+P6 persists the business decisions produced by the runtime. See
+`UTILITY_BILLBACK_ELIGIBILITY.md` for the current eligibility boundary and
+acceptance status; the historical external dataset regression remains separate.
 It does **not** recalculate bill-backs and does not add AppFolio, Vendor Ledger,
 delivery, email, or reconciliation behavior.
 
@@ -39,7 +41,7 @@ Behavior:
 - new facts/rules provenance → new historical decision and the previous active
   decision for that invoice becomes `SUPERSEDED` without being deleted.
 
-`BILLABLE`, `VACANT`, and `COMMON_AREA` are persisted because `$0.00` is also a
+`BILLABLE`, `VACANT`, `COMMON_AREA`, and `NON_BILLABLE` are persisted because `$0.00` is also a
 business decision. Identity-unresolved records are not decisions and are not persisted.
 
 ## Storage
@@ -54,7 +56,7 @@ Money is stored as canonical decimal text, never SQLite `REAL`.
 `config/utility_rules.json` now contains:
 
 ```json
-"rule_version": "1"
+"rule_version": "2"
 ```
 
 P6 also stores the SHA-256 hash of the exact rules file used by the run.

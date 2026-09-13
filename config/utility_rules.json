@@ -1,5 +1,6 @@
 {
-  "rule_version": "1",
+  "rule_version": "2",
+  "non_billable_services": [],
   "allowed_gl_accounts": [
     "5815",
     "5825",

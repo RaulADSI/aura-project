@@ -17,8 +17,8 @@ class BillBackDecisionReadModel:
     tenant: str | None
     vendor: str
     account_number: str
-    service_period_start: date
-    service_period_end: date
+    service_period_start: date | None
+    service_period_end: date | None
     bill_back_amount: Decimal
     classification: str
     decision_reason: str

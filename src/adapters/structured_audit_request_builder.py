@@ -3,11 +3,34 @@ from src.contracts import StructuredUtilityInvoice
 from src.domain.models import AccountingContext, AuditRequest, InvoiceData, OccupancyContext, PropertyContext
 from src.domain.normalization import generate_match_key
 from src.integration_autostack import AutoStackIdentityResult, IdentityType
+from src.domain.models import AuditResult, AuditStatus, ZERO_MONEY
 
 
 class StructuredAuditRequestBuilder:
     def __init__(self, rent_roll_contexts):
         self.rent_roll_contexts = rent_roll_contexts
+
+    def build_zero_result(self, *, invoice, identity, eligibility):
+        """Represent an eligibility decision without querying tenant occupancy.
+
+        InvoiceData.amount is the zero calculation basis here, not an inferred
+        source fact. The original nullable facts stay on BillBackRun.identities
+        and are used by persistence.
+        """
+        if identity.invoice != invoice or not identity.audit_eligible:
+            raise ValueError("Resolved identity must belong to the facts snapshot")
+        status = AuditStatus[eligibility.outcome.value]
+        if status not in {AuditStatus.COMMON_AREA, AuditStatus.NON_BILLABLE}:
+            raise ValueError("Only explicit zero eligibility decisions are supported")
+        request = AuditRequest(
+            InvoiceData(invoice.invoice_id, invoice.invoice_number, invoice.account_number,
+                        invoice.vendor_code, invoice.service_period_start,
+                        invoice.service_period_end, ZERO_MONEY),
+            PropertyContext(None, identity.property_resolution.canonical_property_name,
+                            identity.identity_identifier, identity.identity_type.value),
+            OccupancyContext(), AccountingContext(),
+        )
+        return AuditResult(request, status, ZERO_MONEY, 0, 0, notes=eligibility.reason)
 
     def build(self, *, invoice: StructuredUtilityInvoice,
               identity: AutoStackIdentityResult) -> AuditRequest:
