@@ -33,6 +33,17 @@ class TestStructuredUtilityInvoice(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             invoice.invoice_amount = Decimal("1.00")
 
+    def test_bill_type_is_optional_validated_metadata(self):
+        self.assertIsNone(self._make().bill_type)
+        self.assertEqual(self._make(bill_type="FINAL").bill_type, "FINAL")
+        self.assertEqual(self._make(bill_type="FINAL").contract_version, 1)
+        with self.assertRaises(TypeError):
+            self._make(bill_type=123)
+        with self.assertRaises(ValueError):
+            self._make(bill_type=" ")
+        with self.assertRaises(FrozenInstanceError):
+            self._make(bill_type="FINAL").bill_type = "STANDARD"
+
     def test_invoice_amount_must_be_decimal(self):
         with self.assertRaises(TypeError):
             self._make(invoice_amount=117.90)

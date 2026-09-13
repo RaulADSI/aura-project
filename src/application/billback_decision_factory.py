@@ -7,6 +7,7 @@ from uuid import NAMESPACE_URL, uuid5
 from src.application.billback_service import BillBackRun
 from src.application.rules_metadata import RulesMetadata
 from src.domain.billback_decision import BillBackDecision, DecisionStatus, PERSISTABLE_AUDIT_STATUSES
+from src.domain.models import AuditStatus
 
 
 class BillBackDecisionFactory:
@@ -26,9 +27,10 @@ class BillBackDecisionFactory:
             if identity is None:
                 raise ValueError(f"Missing identity provenance for audit result {invoice_id}")
             snapshot = identity.invoice
-            if snapshot.current_service_amount is None:
+            zero_eligibility = result.status in {AuditStatus.COMMON_AREA, AuditStatus.NON_BILLABLE}
+            if snapshot.current_service_amount is None and not zero_eligibility:
                 raise ValueError(f"Missing current_service_amount for audited invoice {invoice_id}")
-            if snapshot.service_period_start is None or snapshot.service_period_end is None:
+            if not zero_eligibility and (snapshot.service_period_start is None or snapshot.service_period_end is None):
                 raise ValueError(f"Missing service period for audited invoice {invoice_id}")
 
             provenance = f"{invoice_id}|{snapshot.facts_version}|{self.rules.rule_version}"

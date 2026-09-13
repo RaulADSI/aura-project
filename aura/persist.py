@@ -36,6 +36,7 @@ def main(argv=None):
         "processed_decisions": len(persisted.decisions),
         "created_decisions": after_count - before_count,
         "active_decisions": len(active),
+        "rejected": [{"invoice_id": invoice_id, "reason": reason} for invoice_id, reason in run.rejected],
         "statuses": dict(Counter(d.classification.name for d in active)),
         "active_billable_total": str(sum(
             (d.bill_back_amount for d in active if d.classification is AuditStatus.BILLABLE),
@@ -44,7 +45,7 @@ def main(argv=None):
         "aura_db": str(Path(args.aura_db)),
     }
     print(json.dumps(summary, indent=2, ensure_ascii=True))
-    return 0
+    return 1 if run.rejected or any(r.anomalies for r in run.results) else 0
 
 
 if __name__ == "__main__":

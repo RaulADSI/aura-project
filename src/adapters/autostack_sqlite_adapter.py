@@ -59,6 +59,7 @@ class AutoStackSqliteAdapter:
             i.vendor_code AS invoice_vendor_code,
             i.account_number AS invoice_account_number,
             u.id AS facts_id,
+            u.bill_type AS bill_type,
             u.vendor_code AS facts_vendor_code,
             u.account_number AS facts_account_number,
             u.service_period_start AS service_period_start,
@@ -95,7 +96,7 @@ class AutoStackSqliteAdapter:
 
         with closing(self._connect()) as conn:
             row = conn.execute(
-                self._SELECT_BASE + " WHERE i.id = ?",
+                self._select_base(conn) + " WHERE i.id = ?",
                 (invoice_id,),
             ).fetchone()
 
@@ -107,13 +108,10 @@ class AutoStackSqliteAdapter:
 
     def list_canonical_snapshots(self) -> Sequence[StructuredUtilityInvoice]:
         placeholders = ",".join("?" for _ in CANONICAL_ELIGIBLE_STATUSES)
-        sql = (
-            self._SELECT_BASE
-            + f" WHERE i.status IN ({placeholders}) ORDER BY i.received_at, i.id"
-        )
         statuses = tuple(sorted(CANONICAL_ELIGIBLE_STATUSES))
 
         with closing(self._connect()) as conn:
+            sql = self._select_base(conn) + f" WHERE i.status IN ({placeholders}) ORDER BY i.received_at, i.id"
             rows = conn.execute(sql, statuses).fetchall()
 
         snapshots = []
@@ -132,6 +130,14 @@ class AutoStackSqliteAdapter:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _select_base(self, conn: sqlite3.Connection) -> str:
+        # Older AutoStack databases lack this additive metadata column.
+        # Do not infer FINAL from filenames, amounts or raw_billing_summary.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(utility_invoice_details)")}
+        if "bill_type" not in columns:
+            return self._SELECT_BASE.replace("u.bill_type AS bill_type", "NULL AS bill_type")
+        return self._SELECT_BASE
+
     def _map_row(self, row: sqlite3.Row) -> StructuredUtilityInvoice:
         vendor_code = self._required_text(
             row["facts_vendor_code"] or row["invoice_vendor_code"], "vendor_code"
@@ -145,6 +151,7 @@ class AutoStackSqliteAdapter:
                 invoice_id=self._required_text(row["invoice_id"], "invoice_id"),
                 facts_id=self._required_text(str(row["facts_id"]), "facts_id"),
                 facts_version=LEGACY_SINGLETON_FACTS_VERSION,
+                bill_type=self._bill_type(row["bill_type"]),
                 vendor_code=vendor_code,
                 account_number=account_number,
                 invoice_amount=self._money(row["invoice_amount_text"], "invoice_amount", required=True),
@@ -186,6 +193,15 @@ class AutoStackSqliteAdapter:
         if not text:
             raise AutoStackSqliteContractError(f"{field} is required")
         return text
+
+    @staticmethod
+    def _bill_type(value: object) -> Optional[str]:
+        """Preserve source metadata literally; only null/blank means absent."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError("bill_type must be text or NULL")
+        return value if value.strip() else None
 
     @staticmethod
     def _optional_text(value: object) -> Optional[str]:

@@ -16,6 +16,7 @@ from src.adapters.unit_resolver import UnitResolver
 from src.adapters.structured_audit_request_builder import StructuredAuditRequestBuilder
 from src.application.billback_service import BillBackService
 from src.auditor import AuditEngine
+from src.domain.utility_billback_eligibility import UtilityBillBackEligibilityPolicy
 from src.integration_autostack import AutoStackRoutingIdentityAdapter, CommonAreaClassifier
 
 
@@ -45,8 +46,10 @@ def create_service(config: AuraRuntimeConfig) -> BillBackService:
     port = AutoStackSqliteAdapter(config.autostack_db_path)
     identity = AutoStackRoutingIdentityAdapter(port, PropertyResolver(units),
                                              UnitResolver(units), classifier)
+    rules = json.loads(Path(config.utility_rules_path).read_text(encoding="utf-8"))
+    policy = UtilityBillBackEligibilityPolicy(rules.get("non_billable_services", []))
     return BillBackService(port, identity, StructuredAuditRequestBuilder(contexts),
-                           AuditEngine(str(config.utility_rules_path)))
+                           AuditEngine(str(config.utility_rules_path)), policy)
 
 
 def summarize(run):
@@ -68,7 +71,7 @@ def summarize(run):
                          property=r.request.property.property_name,
                          unit=r.request.property.unit_name, tenant=r.request.occupancy.tenant_name,
                          status=r.status.name, bill_back=str(r.calculated_bill_back),
-                         anomalies=[a.name for a in r.anomalies]) for r in run.results],
+                         reason=r.notes, anomalies=[a.name for a in r.anomalies]) for r in run.results],
     }
 
 

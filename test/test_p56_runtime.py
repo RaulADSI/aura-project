@@ -76,6 +76,24 @@ class TestRuntime(unittest.TestCase):
         assert_p56(self, run)
         self.assertFalse(any(r.anomalies for r in run.results))
 
+    def test_gp_final_uses_current_service_only_through_runtime(self):
+        invoice_id = "b7fc2eee-be22-4044-bd23-8aa42819c5a6"
+        with contextlib.closing(sqlite3.connect(self.db)) as conn:
+            conn.execute("UPDATE utility_invoice_details SET bill_type='FINAL', service_period_start='2026-08-24', service_period_end='2026-09-10', previous_bill_amount=283.85, past_due_amount=283.85, current_service_amount=136.98, amount=420.83, total_due=420.83 WHERE invoice_id=?", (invoice_id,))
+            conn.commit()
+        service = create_service(self.config)
+        run = service.run()
+        identity = next(i for i in run.identities if i.invoice.invoice_id == invoice_id)
+        result = next(r for r in run.results if r.request.invoice.invoice_id == invoice_id)
+        self.assertEqual(identity.invoice.bill_type, "FINAL")
+        self.assertEqual(result.calculated_bill_back, Decimal("136.98"))
+        self.assertEqual(result.status.name, "BILLABLE")
+        self.assertEqual(result.total_service_days, 18)
+        with contextlib.closing(sqlite3.connect(self.db)) as conn:
+            conn.execute("UPDATE utility_invoice_details SET current_service_amount=NULL WHERE invoice_id=?", (invoice_id,))
+            conn.commit()
+        self.assertIn((invoice_id, "Missing current_service_amount"), service.run().rejected)
+
     def test_exact_snapshot_does_not_weaken_canonical_policy(self):
         service = create_service(self.config)
         self.assertEqual(len(service.run().identities), 40)

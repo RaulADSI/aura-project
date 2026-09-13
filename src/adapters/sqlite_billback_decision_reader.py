@@ -5,6 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 import sqlite3
+from contextlib import closing
 
 from src.domain.billback_decision import BillBackDecision, DecisionStatus
 from src.domain.models import AuditStatus
@@ -25,7 +26,7 @@ class SqliteBillBackDecisionReader:
         return conn
 
     def list_active(self) -> tuple[BillBackDecision, ...]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 """SELECT * FROM bill_back_decisions
                    WHERE decision_status=?
@@ -49,9 +50,9 @@ class SqliteBillBackDecisionReader:
             property_name=row["property_name"],
             unit_name=row["unit_name"],
             tenant_name=row["tenant_name"],
-            service_period_start=date.fromisoformat(row["service_period_start"]),
-            service_period_end=date.fromisoformat(row["service_period_end"]),
-            current_service_amount=Decimal(row["current_service_amount"]),
+            service_period_start=date.fromisoformat(row["service_period_start"]) if row["service_period_start"] else None,
+            service_period_end=date.fromisoformat(row["service_period_end"]) if row["service_period_end"] else None,
+            current_service_amount=Decimal(row["current_service_amount"]) if row["current_service_amount"] is not None else None,
             occupied_days=int(row["occupied_days"]),
             total_service_days=int(row["total_service_days"]),
             bill_back_amount=Decimal(row["bill_back_amount"]),

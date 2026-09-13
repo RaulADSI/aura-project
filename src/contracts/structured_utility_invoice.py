@@ -86,6 +86,8 @@ class StructuredUtilityInvoice:
     extraction_method: str = "UNKNOWN"
     extractor_version: Optional[str] = None
     contract_version: int = CONTRACT_VERSION
+    # Additive v1 metadata. None means absent, never implicitly STANDARD.
+    bill_type: Optional[str] = None
 
     def __post_init__(self) -> None:
         _require_nonblank(self.invoice_id, "invoice_id")
@@ -126,6 +128,7 @@ class StructuredUtilityInvoice:
             "property_id",
             "unit_hint",
             "extractor_version",
+            "bill_type",
         ):
             _validate_optional_string(getattr(self, field_name), field_name)
 

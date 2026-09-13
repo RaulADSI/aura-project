@@ -26,6 +26,7 @@ CREATE TABLE utility_invoice_details (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  invoice_id TEXT NOT NULL UNIQUE,
  vendor_code TEXT NOT NULL,
+ bill_type TEXT,
  account_number TEXT,
  service_period_start DATE,
  service_period_end DATE,
@@ -141,6 +142,62 @@ class TestAutoStackSqliteAdapter(unittest.TestCase):
         with self.assertRaises(AutoStackSqliteContractError):
             adapter.get_exact_snapshot("inv-1", 1)
         self.assertEqual(adapter.list_canonical_snapshots(), ())
+
+    def test_gp_final_preserves_metadata_without_changing_eligibility(self):
+        from contextlib import closing
+        for status in ("READY", "DISPATCHING", "DISPATCHED", "REVIEW_REQUIRED"):
+            self._insert_invoice(invoice_id=status, status=status,
+                                 current=Decimal("136.98"), total=Decimal("420.83"))
+        with closing(sqlite3.connect(self.db)) as conn:
+            conn.execute("UPDATE utility_invoice_details SET vendor_code='GEORGIA_POWER', bill_type='FINAL'")
+            conn.execute("UPDATE invoices SET vendor_code='GEORGIA_POWER', invoice_number=NULL, invoice_date=NULL")
+            conn.commit()
+        adapter = AutoStackSqliteAdapter(self.db)
+        self.assertEqual({x.invoice_id for x in adapter.list_canonical_snapshots()},
+                         {"READY", "DISPATCHING", "DISPATCHED"})
+        for status in ("READY", "DISPATCHING", "DISPATCHED", "REVIEW_REQUIRED"):
+            snapshot = adapter.get_exact_snapshot(status, 1)
+            self.assertEqual(snapshot.bill_type, "FINAL")
+            self.assertEqual(snapshot.current_service_amount, Decimal("136.98"))
+            self.assertEqual(snapshot.total_due, Decimal("420.83"))
+            self.assertIsNone(snapshot.invoice_number)
+            self.assertIsNone(snapshot.invoice_date)
+
+    def test_bill_type_absent_blank_and_unknown_are_not_inferred(self):
+        from contextlib import closing
+        self._insert_invoice()
+        adapter = AutoStackSqliteAdapter(self.db)
+        for value, expected in ((None, None), ("", None), ("  ", None), ("STANDARD", "STANDARD"), ("CORRECTED_FINAL", "CORRECTED_FINAL"), (" corrected_Final ", " corrected_Final ")):
+            with self.subTest(value=value):
+                with closing(sqlite3.connect(self.db)) as conn:
+                    conn.execute("UPDATE utility_invoice_details SET bill_type=?, raw_billing_summary='FINAL BILL'", (value,))
+                    conn.commit()
+                self.assertEqual(adapter.get_exact_snapshot("inv-1", 1).bill_type, expected)
+                self.assertEqual(adapter.list_canonical_snapshots()[0].bill_type, expected)
+
+    def test_gas_south_review_is_excluded_and_new_charges_are_not_current_service(self):
+        from contextlib import closing
+        self._insert_invoice(status="REVIEW_REQUIRED", current=None, total=Decimal("330.37"))
+        with closing(sqlite3.connect(self.db)) as conn:
+            conn.execute("ALTER TABLE utility_invoice_details ADD COLUMN new_charges_amount DECIMAL(10,2)")
+            conn.execute("UPDATE invoices SET vendor_code='GAS_SOUTH'")
+            conn.execute("UPDATE utility_invoice_details SET vendor_code='GAS_SOUTH', new_charges_amount=35.96, raw_billing_summary='current_service_amount=35.96; reconciled=true'")
+            conn.commit()
+        adapter = AutoStackSqliteAdapter(self.db)
+        self.assertEqual(adapter.list_canonical_snapshots(), ())
+        snapshot = adapter.get_exact_snapshot("inv-1", 1)
+        self.assertIsNone(snapshot.current_service_amount)
+        self.assertIsNone(snapshot.bill_type)
+
+    def test_legacy_schema_without_bill_type_remains_readable(self):
+        from contextlib import closing
+        self._insert_invoice()
+        with closing(sqlite3.connect(self.db)) as conn:
+            conn.execute("ALTER TABLE utility_invoice_details DROP COLUMN bill_type")
+            conn.commit()
+        adapter = AutoStackSqliteAdapter(self.db)
+        self.assertIsNone(adapter.get_exact_snapshot("inv-1", 1).bill_type)
+        self.assertIsNone(adapter.list_canonical_snapshots()[0].bill_type)
 
 
 if __name__ == "__main__":
